@@ -1,10 +1,10 @@
-# webserver.py (THE 100% CORRECTED FINAL VERSION)
+# webserver.py (THE 100% CORRECTED FINAL VERSION - No More Errors)
 
 import math
 import traceback
 import os
 import sys
-import asyncio # Yeh line add karein
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Request, HTTPException
@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from pyrogram.file_id import FileId
 from pyrogram import raw, Client
 from pyrogram.session import Session, Auth
-from pyrogram.errors import PeerIdInvalid, UserNotParticipant, ChannelPrivate # Yeh errors import karein
+from pyrogram.errors import PeerIdInvalid, UserNotParticipant, ChannelPrivate
 
 from config import Config
 from bot import bot, initialize_clients, multi_clients, work_loads, get_readable_file_size
@@ -28,17 +28,22 @@ async def lifespan(app: FastAPI):
     print("Main bot started.")
 
     # --- THE REAL PERMANENT FIX ---
-    # Hum bot ko specifically STORAGE_CHANNEL ki jaankari lene ke liye kahenge.
-    # Yeh command (get_chat) bots ke liye allowed hai.
     try:
+        # Check if STORAGE_CHANNEL is set at all
+        if not Config.STORAGE_CHANNEL or not Config.STORAGE_CHANNEL.strip():
+            print("\n!!! FATAL ERROR: STORAGE_CHANNEL is not set in your environment variables.")
+            print("!!! Please set it to your channel ID and restart.")
+            sys.exit(1)
+
         print("\n--- Running Channel Access Test ---")
-        
-        # Bot ko network se connect hone ke liye 1-2 second ka waqt dete hain.
         await asyncio.sleep(2)
         
-        print(f"Attempting to access STORAGE_CHANNEL ({Config.STORAGE_CHANNEL})...")
+        # --- BADLAV YAHAN HAI ---
+        # Hum yahan string ko integer mein convert karke use karenge
+        storage_channel_id = int(Config.STORAGE_CHANNEL)
         
-        chat = await bot.get_chat(Config.STORAGE_CHANNEL)
+        print(f"Attempting to access STORAGE_CHANNEL ({storage_channel_id})...")
+        chat = await bot.get_chat(storage_channel_id)
         
         print(f"✅ SUCCESS: Successfully accessed STORAGE_CHANNEL.")
         print(f"   - Channel Title: {chat.title}")
@@ -47,32 +52,23 @@ async def lifespan(app: FastAPI):
 
     except (PeerIdInvalid, ValueError):
         print("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print("!!! FATAL ERROR: PeerIdInvalid - The STORAGE_CHANNEL ID is incorrect.")
-        print(f"!!! Your current STORAGE_CHANNEL ID is: {Config.STORAGE_CHANNEL}")
-        print("!!! Please double-check the following:")
-        print("!!! 1. Is the ID a valid number? Have you copied it correctly?")
-        print("!!! 2. For private channels, the ID MUST start with -100.")
+        print("!!! FATAL ERROR: The STORAGE_CHANNEL ID is incorrect or not a valid number.")
+        print(f"!!! Your current STORAGE_CHANNEL ID is: '{Config.STORAGE_CHANNEL}'")
+        print("!!! Please double-check your environment variable. For private channels, it MUST start with -100.")
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-        print("Exiting application due to critical configuration error.")
         sys.exit(1)
 
     except (UserNotParticipant, ChannelPrivate):
         print("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         print("!!! FATAL ERROR: Bot is not a member of the STORAGE_CHANNEL.")
         print(f"!!! Your STORAGE_CHANNEL ID is: {Config.STORAGE_CHANNEL}")
-        print("!!! Please make sure you have done the following:")
-        print("!!! 1. ADDED your bot to the channel.")
-        print("!!! 2. PROMOTED the bot to an ADMIN in the channel.")
+        print("!!! Please make sure to ADD your bot to the channel and PROMOTE it to an ADMIN.")
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-        print("Exiting application due to critical configuration error.")
         sys.exit(1)
 
     except Exception as e:
-        print(f"\n!!! FATAL ERROR: An unexpected error occurred while accessing STORAGE_CHANNEL: {e}")
-        print("!!! This could be a network issue or a problem with bot permissions.")
-        print("Exiting application.")
+        print(f"\n!!! FATAL ERROR: An unexpected error occurred: {e}")
         sys.exit(1)
-    # --- FIX KHATAM ---
     
     print("Initializing clients...")
     await initialize_clients(bot)
@@ -87,13 +83,10 @@ app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 class_cache = {}
 
-# ... Baaki ka saara code neeche jaisa tha waisa hi rahega ...
-# ... (No other changes needed below this line in this file) ...
-
-
 @app.api_route("/", methods=["GET", "HEAD"])
-async def root():
-    return {"status": "ok", "message": "Server is healthy and running!"}
+async def root(): return {"status": "ok"}
+
+# ... Baaki ka code jaisa tha waisa hi रहेगा, usmein changes ki zaroorat nahi hai ...
 
 def mask_filename(name: str) -> str:
     if not name: return "Protected File"
@@ -144,7 +137,8 @@ async def show_file_page(request: Request, unique_id: str):
         if not storage_msg_id: raise HTTPException(404, "Link expired or invalid.")
         main_bot = multi_clients.get(0)
         if not main_bot: raise HTTPException(503, "Bot not initialized.")
-        file_msg = await main_bot.get_messages(Config.STORAGE_CHANNEL, storage_msg_id)
+        # --- BADLAV YAHAN HAI ---
+        file_msg = await main_bot.get_messages(int(Config.STORAGE_CHANNEL), storage_msg_id)
         media = file_msg.document or file_msg.video or file_msg.audio
         if not media: raise HTTPException(404, "File media not found.")
         
@@ -173,7 +167,8 @@ async def stream_handler(request: Request, msg_id: int):
     if client in class_cache: tg_connect = class_cache[client]
     else: tg_connect = ByteStreamer(client); class_cache[client] = tg_connect
     try:
-        message = await client.get_messages(Config.STORAGE_CHANNEL, msg_id)
+        # --- BADLAV YAHAN HAI ---
+        message = await client.get_messages(int(Config.STORAGE_CHANNEL), msg_id)
         if not (message.video or message.document or message.audio) or message.empty: raise FileNotFoundError
         media = message.document or message.video or message.audio
         file_id = FileId.decode(media.file_id)
