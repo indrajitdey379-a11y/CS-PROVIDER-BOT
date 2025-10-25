@@ -1,4 +1,4 @@
-# app.py (FULL CODE with mask_filename FIX)
+# app.py (FINAL CODE WITH BLOGGER LINK)
 
 import os
 import asyncio
@@ -29,7 +29,6 @@ from database import db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ... (lifespan code is correct, no changes)
     print("--- Lifespan event: STARTUP ---")
     await db.connect()
     try:
@@ -39,55 +38,72 @@ async def lifespan(app: FastAPI):
         print(f"Verifying channel access for {Config.STORAGE_CHANNEL}...")
         await bot.get_chat(Config.STORAGE_CHANNEL)
         print("✅ Channel is accessible.")
-        try: await cleanup_channel(bot)
-        except Exception as e: print(f"Warning: Cleanup failed. Error: {e}")
-        multi_clients[0] = bot; work_loads[0] = 0
-        print("--- Lifespan startup complete. ---")
+        try:
+            await cleanup_channel(bot)
+        except Exception as e:
+            print(f"Warning: Initial channel cleanup failed, but continuing startup. Error: {e}")
+        multi_clients[0] = bot
+        work_loads[0] = 0
+        print("--- Lifespan startup complete. Bot is running in the background. ---")
     except Exception as e:
-        print(f"!!! FATAL ERROR in lifespan: {traceback.format_exc()}")
+        print(f"!!! FATAL ERROR during bot startup in lifespan: {traceback.format_exc()}")
     yield
     print("--- Lifespan event: SHUTDOWN ---")
-    if bot.is_initialized: await bot.stop()
+    if bot.is_initialized:
+        await bot.stop()
     print("--- Lifespan shutdown complete ---")
 
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 bot = Client("SimpleStreamBot", api_id=Config.API_ID, api_hash=Config.API_HASH, bot_token=Config.BOT_TOKEN, in_memory=True)
-multi_clients = {}; work_loads = {}; class_cache = {}
+multi_clients = {}
+work_loads = {}
+class_cache = {}
 
 # --- Helper Functions ---
 def get_readable_file_size(size_in_bytes):
-    if not size_in_bytes: return '0B'; power,n=1024,0; p_labels={0:'',1:'K',2:'M',3:'G'}
-    while size_in_bytes>=power and n<len(p_labels): size_in_bytes/=power; n+=1
-    return f"{size_in_bytes:.2f} {p_labels[n]}B"
+    if not size_in_bytes: return '0B'
+    power = 1024; n = 0; power_labels = {0: '', 1: 'K', 2: 'M', 3: 'G'}
+    while size_in_bytes >= power and n < len(power_labels) - 1:
+        size_in_bytes /= power
+        n += 1
+    return f"{size_in_bytes:.2f} {power_labels[n]}B"
 
-# --- THIS IS THE FIX ---
 def mask_filename(name: str):
-    if not name:
-        return "Protected File"
-    resolutions = ["2160p", "1080p", "720p", "480p", "360p"]
-    res_part = ""
+    if not name: return "Protected File"
+    resolutions = ["2160p", "1080p", "720p", "480p", "360p"]; res_part = ""
     for res in resolutions:
-        if res in name:
-            res_part = f" {res}"
-            name = name.replace(res, "")
-            break
-    base, ext = os.path.splitext(name)
-    masked_base = ''.join(c if (i % 3 == 0 and c.isalnum()) else '*' for i, c in enumerate(base))
+        if res in name: res_part = f" {res}"; name = name.replace(res, ""); break
+    base, ext = os.path.splitext(name); masked_base = ''.join(c if (i % 3 == 0 and c.isalnum()) else '*' for i, c in enumerate(base))
     return f"{masked_base}{res_part}{ext}"
-# --- FIX ENDS HERE ---
 
-# --- (All other handlers, routes, and logic are correct and unchanged) ---
+# --- Pyrogram Bot Handlers ---
+
 @bot.on_message(filters.command("start") & filters.private)
-async def start_command(_,m:Message): await m.reply_text(f"👋 **Hello, {m.from_user.first_name}!**\nI'm a file-to-link bot.")
-async def handle_file_upload(m:Message,uid:int):
+async def start_command(_, message: Message):
+    user_name = message.from_user.first_name
+    await message.reply_text(f"👋 **Hello, {user_name}!**\nI'm a file-to-link bot.")
+
+async def handle_file_upload(message: Message, user_id: int):
     try:
-        sm=await m.copy(Config.STORAGE_CHANNEL); uqid=secrets.token_urlsafe(8); await db.save_link(uqid,sm.id)
-        flink=f"{Config.BASE_URL}/show/{uqid}"; btn=InlineKeyboardMarkup([[InlineKeyboardButton("Open Your Link 🔗",url=flink)]])
-        await m.reply_text("✅ Link generated!",reply_markup=btn,quote=True)
-    except Exception as e: print(f"!!! ERROR: {traceback.format_exc()}"); await m.reply_text("Sorry, something went wrong.")
-@bot.on_message(filters.private & (filters.document|filters.video|filters.audio))
-async def file_handler(_,m:Message): await handle_file_upload(m,m.from_user.id)
+        sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
+        unique_id = secrets.token_urlsafe(8)
+        await db.save_link(unique_id, sent_message.id)
+        
+        # --- YAHAN BADLAV KIYA GAYA HAI ---
+        # Ab yeh Blogger URL check karega
+        final_link = f"{Config.BLOGGER_PAGE_URL}?id={unique_id}" if Config.BLOGGER_PAGE_URL else f"{Config.BASE_URL}/show/{unique_id}"
+        
+        button = InlineKeyboardMarkup([[InlineKeyboardButton("Open Your Link 🔗", url=final_link)]])
+        await message.reply_text("✅ Your shareable link has been generated!", reply_markup=button, quote=True)
+    except Exception as e:
+        print(f"!!! ERROR in handle_file_upload: {traceback.format_exc()}"); await message.reply_text("Sorry, something went wrong.")
+
+@bot.on_message(filters.private & (filters.document | filters.video | filters.audio))
+async def file_handler(_, message: Message):
+    await handle_file_upload(message, message.from_user.id)
+
+# ... (baaki saare handlers jaise url_upload_handler, gatekeeper, etc. same rahenge)
 @bot.on_message(filters.command("url") & filters.private & filters.user(Config.OWNER_ID))
 async def url_upload_handler(_,m:Message):
     if len(m.command)<2: await m.reply_text("Usage: `/url <link>`"); return
@@ -177,8 +193,8 @@ async def stream_media(r:Request,mid:int,fname:str):
         return StreamingResponse(body,status_code=sc,headers=hdrs)
     except FileNotFoundError:raise HTTPException(404)
     except Exception:print(traceback.format_exc());raise HTTPException(500)
-# ...
 
+# --- Main Execution Block ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("app:app", host="0.0.0.0", port=port)
