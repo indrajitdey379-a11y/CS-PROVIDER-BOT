@@ -1,15 +1,17 @@
-# app.py (FINAL, CLEAN, AND EASY-TO-READ CODE)
+# app.py (THE ABSOLUTELY FINAL, NO-SHORTCUTS, CLEAN CODE)
 
 import os
 import asyncio
 import secrets
 import traceback
 import uvicorn
+import re  # Import for regular expressions
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated
-from pyrogram.errors import FloodWait, UserNotParticipant
+from pyrogram.errors import FloodWait
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -33,51 +35,31 @@ async def lifespan(app: FastAPI):
     """
     print("--- Lifespan event: STARTUP ---")
     
-    # 1. Database se connect karo
     await db.connect()
     
     try:
-        # 2. Pyrogram bot ko background mein start karo
         print("Starting Pyrogram client in background...")
         await bot.start()
+        print(f"Bot [@{bot.me.username}] started successfully.")
         
-        # Bot ka username Config mein save karo taaki deep links kaam karein
-        me = await bot.get_me()
-        Config.BOT_USERNAME = me.username
-        print(f"Bot [@{Config.BOT_USERNAME}] started successfully.")
-        
-        # 3. Storage channel ko check karo
         print(f"Verifying channel access for {Config.STORAGE_CHANNEL}...")
         await bot.get_chat(Config.STORAGE_CHANNEL)
-        print("✅ Storage channel is accessible.")
-
-        # 4. Force sub channel ko check karo (agar set hai toh)
-        if Config.FORCE_SUB_CHANNEL:
-            try:
-                print(f"Verifying channel access for {Config.FORCE_SUB_CHANNEL}...")
-                await bot.get_chat(Config.FORCE_SUB_CHANNEL)
-                print("✅ Force Sub channel is accessible.")
-            except Exception as e:
-                print(f"!!! WARNING: Bot is not an admin in FORCE_SUB_CHANNEL. Force Sub will not work. Error: {e}")
+        print("✅ Channel is accessible.")
         
-        # 5. Agar channel mein koi anjaan member hai, toh use hatao
         try:
             await cleanup_channel(bot)
         except Exception as e:
             print(f"Warning: Initial channel cleanup failed, but continuing startup. Error: {e}")
 
-        # 6. Multi-client setup (abhi ke liye sirf main bot)
         multi_clients[0] = bot
         work_loads[0] = 0
         
         print("--- Lifespan startup complete. Bot is running in the background. ---")
-    
     except Exception as e:
         print(f"!!! FATAL ERROR during bot startup in lifespan: {traceback.format_exc()}")
     
-    yield  # Ab web server requests lena shuru karega
+    yield
     
-    # Server band hone par yeh code chalega
     print("--- Lifespan event: SHUTDOWN ---")
     if bot.is_initialized:
         await bot.stop()
@@ -115,72 +97,45 @@ def get_readable_file_size(size_in_bytes):
     return f"{size_in_bytes:.2f} {power_labels[n]}"
 
 def mask_filename(name: str):
-    """File ka naam thoda chupa deta hai."""
+    """Sirf title ko mask karta hai, quality/codec/year ko nahi."""
     if not name:
         return "Protected File"
-    
-    resolutions = ["2160p", "1080p", "720p", "480p", "360p"]
-    res_part = ""
-    
-    for res in resolutions:
-        if res in name:
-            res_part = f" {res}"
-            name = name.replace(res, "")
-            break
-            
+
     base, ext = os.path.splitext(name)
-    masked_base = ''.join(c if (i % 3 == 0 and c.isalnum()) else '*' for i, c in enumerate(base))
-    return f"{masked_base}{res_part}{ext}"
+
+    # Yeh pattern saal (jaise 2023) ya quality (1080p, 720p, HEVC, etc.) ko dhoondhega
+    metadata_pattern = re.compile(
+        r'((19|20)\d{2}|4k|2160p|1080p|720p|480p|360p|HEVC|x265|BluRay|WEB-DL|HDRip)',
+        re.IGNORECASE
+    )
+    
+    match = metadata_pattern.search(base)
+    
+    if match:
+        # Agar koi metadata mila, toh naam ko do hisso mein baant do
+        title_part = base[:match.start()].strip(' .-_')
+        metadata_part = base[match.start():]
+    else:
+        # Agar kuch nahi mila, toh poore naam ko hi title maan lo
+        title_part = base
+        metadata_part = ""
+
+    # Ab sirf title waale hisse par mask lagao
+    # ' ' jaise special characters ko waisa hi rehne do
+    masked_title = ''.join(c if (i % 3 == 0 and c.isalnum()) else ('*' if c.isalnum() else c) for i, c in enumerate(title_part))
+    
+    # Dono hisso ko jod kar poora naam banao
+    return f"{masked_title} {metadata_part}{ext}".strip()
 
 # =====================================================================================
 # --- PYROGRAM BOT HANDLERS: Telegram se aane wale commands ko handle karna ---
 # =====================================================================================
 
 @bot.on_message(filters.command("start") & filters.private)
-async def start_command(client: Client, message: Message):
-    """/start command aur Force Subscribe ki verification ko handle karta hai."""
-    user_id = message.from_user.id
+async def start_command(_, message: Message):
+    """/start command ka jawab deta hai."""
     user_name = message.from_user.first_name
-    
-    # Check karo ki /start ke saath koi "verify_..." jaisa code hai ya nahi
-    if len(message.command) > 1 and message.command[1].startswith("verify_"):
-        unique_id = message.command[1].split("_", 1)[1]
-        
-        # Agar Force Subscribe channel set hai, toh user ki membership check karo
-        if Config.FORCE_SUB_CHANNEL:
-            try:
-                # Bot check karega ki user member hai ya nahi
-                await client.get_chat_member(Config.FORCE_SUB_CHANNEL, user_id)
-            except UserNotParticipant:
-                # Agar user member nahi hai, toh use join karne ko bolo
-                channel_username = str(Config.FORCE_SUB_CHANNEL).replace('@', '')
-                channel_link = f"https://t.me/{channel_username}"
-                
-                join_button = InlineKeyboardButton("📢 Join Channel", url=channel_link)
-                retry_button = InlineKeyboardButton("✅ Try Again", url=f"https://t.me/{Config.BOT_USERNAME}?start={message.command[1]}")
-                
-                keyboard = InlineKeyboardMarkup([[join_button], [retry_button]])
-                
-                await message.reply_text(
-                    "**You must join our channel to get the download link!**\n\n"
-                    "Click the button below to join, then click 'Try Again'.",
-                    reply_markup=keyboard,
-                    quote=True
-                )
-                return # Function ko yahin rok do
-
-        # Agar user member hai (ya force sub on nahi hai), toh use asli link do
-        final_link = f"{Config.BLOGGER_PAGE_URL}?id={unique_id}" if Config.BLOGGER_PAGE_URL else f"{Config.BASE_URL}/show/{unique_id}"
-        
-        reply_text = f"✅ Verification successful!\n\nTap to copy your link:\n`{final_link}`"
-        
-        button = InlineKeyboardMarkup([[InlineKeyboardButton("Open Your Link 🔗", url=final_link)]])
-        
-        await message.reply_text(reply_text, reply_markup=button, quote=True, disable_web_page_preview=True)
-
-    else:
-        # Agar simple /start command hai, toh welcome message do
-        reply_text = f"""
+    reply_text = f"""
 👋 **Hello, {user_name}!**
 
 Welcome to Sharing Box Bot. I can help you create permanent, shareable links for your files.
@@ -190,26 +145,25 @@ Just send or forward any file to this chat.
 
 I will instantly give you a special link that you can share with anyone!
 """
-        await message.reply_text(reply_text)
+    await message.reply_text(reply_text)
 
 async def handle_file_upload(message: Message, user_id: int):
-    """File milne par verification link generate karta hai."""
+    """File milne par link generate karta hai."""
     try:
         sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
         unique_id = secrets.token_urlsafe(8)
         await db.save_link(unique_id, sent_message.id)
         
-        # Ab direct link ke bajaye, verification link generate karo
-        verify_link = f"https://t.me/{Config.BOT_USERNAME}?start=verify_{unique_id}"
+        final_link = f"{Config.BLOGGER_PAGE_URL}?id={unique_id}" if Config.BLOGGER_PAGE_URL else f"{Config.BASE_URL}/show/{unique_id}"
         
-        button = InlineKeyboardMarkup([[InlineKeyboardButton("Click Here to Get Link 🔗", url=verify_link)]])
-        
-        await message.reply_text(
-            "✅ Your file has been processed!\n\n"
-            "Click the button below to verify and get the final link.",
-            reply_markup=button,
-            quote=True
-        )
+        reply_text = f"""
+✅ Your shareable link has been generated!
+
+Tap to copy the link below:
+`{final_link}`
+"""
+        button = InlineKeyboardMarkup([[InlineKeyboardButton("Open Your Link 🔗", url=final_link)]])
+        await message.reply_text(reply_text, reply_markup=button, quote=True, disable_web_page_preview=True)
     except Exception as e:
         print(f"!!! ERROR in handle_file_upload: {traceback.format_exc()}")
         await message.reply_text("Sorry, something went wrong.")
