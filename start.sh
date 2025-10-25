@@ -1,4 +1,4 @@
 #!/bin/bash
 
-# Ab hum seedhe apni Python script ko chalayenge
+# Ab hum Gunicorn ko nahi, seedhe apni Python script ko chalayenge
 python3 main.py
