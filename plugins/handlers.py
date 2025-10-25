@@ -1,4 +1,4 @@
-# plugins/handlers.py
+# plugins/handlers.py (FINAL UPDATED CODE)
 
 import os
 import time
@@ -13,21 +13,15 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import Config
 from database import db
-from bot import bot # Sabse zaroori: bot ko import karo taaki decorators kaam karein
-
-# Helper function yahan rahega kyunki yeh handlers use karte hain
-def get_readable_file_size(size_in_bytes):
-    if not size_in_bytes: return '0B'
-    power, n = 1024, 0
-    power_labels = {0: '', 1: 'K', 2: 'M', 3: 'G'}
-    while size_in_bytes >= power and n < len(power_labels):
-        size_in_bytes /= power; n += 1
-    return f"{size_in_bytes:.2f} {power_labels[n]}B"
-
+# Ab 'get_readable_file_size' ko bot.py se import kiya ja raha hai
+from bot import bot, get_readable_file_size
 
 # --- Bot Handlers ---
+# Saare handlers ab yahan hain.
+
 @bot.on_message(filters.command("start") & filters.private)
 async def start_command(client, message: Message):
+    """/start command ka handler."""
     user_name = message.from_user.first_name
     start_text = f"""
 👋 **Hello, {user_name}!**
@@ -44,12 +38,16 @@ I will instantly give you a special link that you can share with anyone!
 
 
 async def handle_file_upload(message: Message, user_id: int):
+    """
+    File ko storage channel mein copy karne aur link generate karne ka main logic.
+    """
     try:
         sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
         unique_id = secrets.token_urlsafe(8)
         
         await db.save_link(unique_id, sent_message.id)
         
+        # Agar BLOGGER_PAGE_URL set hai to use use karo, warna BASE_URL se link banao
         final_link = f"{Config.BLOGGER_PAGE_URL}?id={unique_id}" if Config.BLOGGER_PAGE_URL else f"{Config.BASE_URL}/show/{unique_id}"
 
         button = InlineKeyboardMarkup(
@@ -63,16 +61,18 @@ async def handle_file_upload(message: Message, user_id: int):
         )
     except Exception as e:
         print(f"!!! ERROR in handle_file_upload: {traceback.format_exc()}")
-        await message.reply_text("Sorry, something went wrong.")
+        await message.reply_text("Sorry, something went wrong. Please check if the bot is admin in the storage channel.")
 
 
 @bot.on_message(filters.private & (filters.document | filters.video | filters.audio))
 async def file_handler(client, message: Message):
+    """File (document, video, audio) receive karne ka handler."""
     await handle_file_upload(message, message.from_user.id)
 
 
 @bot.on_message(filters.command("url") & filters.private & filters.user(Config.OWNER_ID))
 async def url_upload_handler(client, message: Message):
+    """/url command ka handler."""
     if len(message.command) < 2:
         await message.reply_text("Usage: `/url <direct_download_link>`"); return
 
@@ -80,8 +80,9 @@ async def url_upload_handler(client, message: Message):
     file_name = os.path.basename(urlparse(url).path) or f"file_{int(time.time())}"
     status_msg = await message.reply_text("Processing your link...")
 
-    if not os.path.exists('downloads'): os.makedirs('downloads')
-    file_path = os.path.join('downloads', file_name)
+    download_dir = 'downloads'
+    if not os.path.exists(download_dir): os.makedirs(download_dir)
+    file_path = os.path.join(download_dir, file_name)
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -90,6 +91,7 @@ async def url_upload_handler(client, message: Message):
                     await status_msg.edit_text(f"Download failed! Status: {resp.status}"); return
                 
                 async with aiofiles.open(file_path, 'wb') as f:
+                    # File ko chunks me download karo taaki memory use kam ho
                     async for chunk in resp.content.iter_chunked(1024 * 1024):
                         await f.write(chunk)
     except Exception as e:
@@ -98,8 +100,11 @@ async def url_upload_handler(client, message: Message):
         return
     
     try:
+        # File ko Telegram par upload karo
         sent_message = await client.send_document(chat_id=Config.STORAGE_CHANNEL, document=file_path)
+        # Ab is uploaded file ke liye link generate karo
         await handle_file_upload(sent_message, message.from_user.id)
         await status_msg.delete()
     finally:
+        # Local downloaded file ko delete kardo
         if os.path.exists(file_path): os.remove(file_path)
