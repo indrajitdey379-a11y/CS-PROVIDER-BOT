@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sharing Box - Download</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            transition: all 0.2s ease-in-out;
+        }
+        .btn-primary {
+            background-color: #4f46e5;
+            color: #ffffff;
+        }
+        .btn-primary:hover {
+            background-color: #4338ca;
+        }
+        .btn-secondary {
+            background-color: #374151;
+            color: #ffffff;
+        }
+        .btn-secondary:hover {
+            background-color: #4b5563;
+        }
+        .loader {
+            border: 6px solid #374151;
+            border-top: 6px solid #4f46e5;
+            border-radius: 50%;
+            width: 55px;
+            height: 55px;
+            animation: spin 1.2s linear infinite;
+            margin: auto;
+        }
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body class="flex flex-col min-h-screen">
+
+<!-- HEADER -->
+<header class="w-full bg-gray-900 shadow-md p-4 text-center text-xl font-bold">
+    Sharing Box
+</header>
+
+<!-- MAIN -->
+<main class="flex-grow flex items-center justify-center p-4 w-full">
+    <div class="max-w-xl w-full text-center">
+
+        <!-- LOADER -->
+        <div id="loader-container">
+            <div class="loader"></div>
+            <p class="mt-4 text-gray-400">Please wait, loading file…</p>
+        </div>
+
+        <!-- CONTENT -->
+        <div id="content-container" style="display:none">
+            <h1 id="file-name" class="text-xl sm:text-2xl font-bold mb-2 break-words"></h1>
+            <p id="file-size" class="text-gray-400 mb-6"></p>
+
+            <div id="button-container" class="flex flex-col sm:flex-row gap-4 justify-center"></div>
+        </div>
+
+    </div>
+</main>
+
+<!-- FOOTER -->
+<footer class="w-full bg-gray-900 p-3 text-center text-gray-500 text-sm">
+    © 2025 Sharing Box. All Rights Reserved.
+</footer>
+
+<script>
+    // Auto-detect base URL (Render, localhost, custom domain)
+    const BASE_URL = window.location.origin;
+
+    // Extract unique ID from /show/{id}
+    const pathParts = window.location.pathname.split("/");
+    const FILE_ID = pathParts[pathParts.length - 1];
+
+    async function fetchFileData() {
+        const loader = document.getElementById("loader-container");
+        const content = document.getElementById("content-container");
+        const fileNameEl = document.getElementById("file-name");
+        const fileSizeEl = document.getElementById("file-size");
+        const buttonContainer = document.getElementById("button-container");
+
+        try {
+            const response = await fetch(`${BASE_URL}/api/file/${FILE_ID}`);
+            if (!response.ok) throw new Error("Invalid or expired link");
+
+            const data = await response.json();
+
+            fileNameEl.innerText = data.file_name;
+            fileSizeEl.innerText = `File Size: ${data.file_size}`;
+            document.title = `Download ${data.file_name}`;
+
+            buttonContainer.innerHTML = "";
+
+            if (data.is_media) {
+                const mxLink = `intent:${data.direct_dl_link}#Intent;action=android.intent.action.VIEW;type=video/*;end`;
+                const vlcLink = `intent:${data.direct_dl_link}#Intent;action=android.intent.action.VIEW;type=video/*;package=org.videolan.vlc;end`;
+
+                buttonContainer.innerHTML = `
+                    <a href="${data.direct_dl_link}" class="btn btn-primary">⬇ Direct Download</a>
+                    <a href="${mxLink}" class="btn btn-secondary">▶ Play in MX Player</a>
+                    <a href="${vlcLink}" class="btn btn-secondary">▶ Play in VLC</a>
+                `;
+            } else {
+                buttonContainer.innerHTML = `
+                    <a href="${data.direct_dl_link}" class="btn btn-primary">⬇ Download File</a>
+                `;
+            }
+
+            loader.style.display = "none";
+            content.style.display = "block";
+
+        } catch (err) {
+            loader.innerHTML = "<p class='text-red-400'>❌ Invalid or expired link</p>";
+            console.error(err);
+        }
+    }
+
+    fetchFileData();
+</script>
+
+<script>
+    // Disable right-click
+    document.addEventListener("contextmenu", e => e.preventDefault());
+</script>
+
+</body>
+</html>
